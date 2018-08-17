@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"runtime"
 	"strings"
@@ -20,9 +22,8 @@ func Eprintf(format string, a ...interface{}) {
 	fmt.Fprintf(os.Stderr, format, a...)
 }
 
-func panic_fmt(format string, a ...interface{}) {
-	s := fmt.Sprintf(format, a...)
-	panic(s)
+func warn(format string, a ...interface{}) {
+	fmt.Fprintf(os.Stderr, "WARNING: "+format, a...)
 }
 
 func fsleep(length float64) {
@@ -64,4 +65,54 @@ func assert(cond bool, mes string, a ...interface{}) {
 	if !cond {
 		panic(fmt.Sprintf(mes, a...))
 	}
+}
+
+func quick_read(filename string) []byte {
+	// st, e := os.Stat(filename)
+	// if e != nil {
+	//         return nil
+	// }
+	//
+	// var (
+	//         ret  = make([]byte, 0, st.Size())
+	//         file *os.File
+	//         n    int
+	// )
+
+	var (
+		buf  bytes.Buffer
+		file *os.File
+		e    error
+	)
+
+	if file, e = os.Open(filename); e != nil {
+		return nil
+	}
+	/* if n, e = file.Read(ret); e != nil || int64(n) != st.Size() {
+		log.Panicf("Unexpected io error: %s, (n=%d, size=%d)", e, n, st.Size())
+	} */
+
+	if _, e = buf.ReadFrom(file); e != nil {
+		log.Panicf("Unexpected read error: %v\n", e)
+	}
+
+	file.Close()
+	return buf.Bytes()
+}
+
+func unique_str(strlist []string) []string {
+	keys := make(map[string]bool)
+	ret := []string{}
+
+	for _, entry := range strlist {
+		if entry == "" {
+			continue
+		}
+		if _, value := keys[entry]; !value {
+			keys[entry] = true
+			ret = append(ret, entry)
+		}
+	}
+
+	return ret
 }

@@ -1,6 +1,7 @@
 package mpack
 
 import (
+	"log"
 	"syscall"
 )
 
@@ -185,7 +186,7 @@ func do_decode(read read_fn, src *interface{}) *Object {
 	case grp_BIN:
 		panic("Bin is not implemented.")
 	default:
-		panic_fmt("Default reached. grp: %d, obj: %v", mask.group, mask)
+		log.Panicf("Default reached. grp: %d, obj: %v", mask.group, mask)
 	}
 	return nil
 }

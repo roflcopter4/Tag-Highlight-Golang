@@ -47,7 +47,7 @@ func print_object(fp *os.File, obj *Object) {
 	case T_NUM:
 		print_number(fp, obj)
 	default:
-		panic("Invalid pack type.")
+		panic(fmt.Sprintf("Invalid pack type '%s'.", obj.TypeRepr()))
 	}
 }
 

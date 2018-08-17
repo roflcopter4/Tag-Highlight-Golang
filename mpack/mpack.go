@@ -2,6 +2,8 @@ package mpack
 
 import (
 	"fmt"
+	"log"
+	"tag_highlight/lists"
 )
 
 const ( // Mpack object types
@@ -14,7 +16,6 @@ const ( // Mpack object types
 	T_ARRAY
 	T_MAP
 )
-
 const ( // Mpack flags
 	mFLAG_ENCODE = 0x01
 	mFLAG_PACKED = 0x02
@@ -54,19 +55,18 @@ const ( // Mpack encoding masks
 )
 
 var (
-	DEBUG = true
+	DEBUG     = true
+	Type_Repr = [8]string{
+		"mpack.T_UNINITIALIZED",
+		"mpack.T_BOOL",
+		"mpack.T_NIL",
+		"mpack.T_NUM",
+		"mpack.T_EXT",
+		"mpack.T_STRING",
+		"mpack.T_ARRAY",
+		"mpack.T_MAP",
+	}
 )
-
-var Type_Repr = [8]string{
-	"mpack.T_UNINITIALIZED",
-	"mpack.T_BOOL",
-	"mpack.T_NIL",
-	"mpack.T_NUM",
-	"mpack.T_EXT",
-	"mpack.T_STRING",
-	"mpack.T_ARRAY",
-	"mpack.T_MAP",
-}
 
 type Object struct {
 	Data   interface{}
@@ -82,11 +82,6 @@ type Map_Entry struct {
 type Ext struct {
 	Etype int8
 	Num   uint32
-}
-
-type Atomic_Args struct {
-	Fmt  [][]byte
-	Args []interface{}
 }
 
 //========================================================================================
@@ -118,8 +113,8 @@ func (obj *Object) GetPack() []byte {
 
 const (
 	mOWN_ARGS = iota
-	mOTHER_ARGS
-	mATOMIC_LIST
+	mREF_ARGS
+	mREF_LIST
 )
 
 func two_thirds(val uint) uint {
@@ -129,28 +124,24 @@ func two_thirds(val uint) uint {
 func Encode_fmt(size_hint uint, format string, args ...interface{}) *Object {
 	// eprintf("Fmt is '%s'\n", format)
 	var (
-		arr_size      uint    = 8192 + (6 * size_hint)
-		sub_lengths   []uint  = make([]uint, arr_size)
-		len_stack     []*uint = make([]*uint, two_thirds(arr_size))
-		cur_len       *uint   = &sub_lengths[0]
-		len_ctr       uint    = 0
-		len_stack_ctr uint    = 0
+		arr_size    uint   = 8192 + (6 * size_hint)
+		sub_lengths []uint = make([]uint, arr_size)
+		cur_len     *uint  = &sub_lengths[0]
+		len_ctr     uint   = 0
+		len_stack          = lists.New_Stack(int(two_thirds(arr_size)), 0)
 	)
 
 	for _, ch := range format {
 		switch ch {
 		case 'b', 'B', 'l', 'L', 'd', 'D', 's', 'S', 'c', 'C', 'n', 'N':
 			*cur_len++
-
 		case '[', '{':
 			*cur_len++
-			len_stack_ctr++
+			len_stack.Push(cur_len)
 			len_ctr++
-			len_stack[len_stack_ctr] = cur_len
 			cur_len = &sub_lengths[len_ctr]
-
 		case ']', '}':
-			cur_len = len_stack[len_stack_ctr]
+			cur_len = len_stack.Pop().(*uint)
 
 		case ':', '.', ' ', ',', '!', '@', '*':
 		default:
@@ -158,65 +149,52 @@ func Encode_fmt(size_hint uint, format string, args ...interface{}) *Object {
 			panic(s)
 		}
 	}
-
 	if sub_lengths[0] == 0 {
 		return nil
 	}
-
-	pack := Make_New(sub_lengths[0], true)
+	// eprintf("lengths: %v", sub_lengths[:len_ctr+1])
 
 	var (
-		ref             *[]interface{} = nil
-		next_type       int            = mOWN_ARGS
-		obj_stack       []*Object      = make([]*Object, two_thirds(arr_size))
-		cur_obj         *Object        = pack.Index(0)
-		map_stack       []uint         = make([]uint, two_thirds(arr_size))
-		sub_ctrlist     []uint         = make([]uint, two_thirds(arr_size))
-		cur_ctr         *uint          = &sub_ctrlist[0]
-		obj_stack_ctr   uint           = 0
-		map_stack_ctr   uint           = 0
-		sub_ctrlist_ctr uint           = 0
-		args_ctr        uint           = 0
-		ref_ctr         uint           = 0
+		pack            *Object          = Make_New(sub_lengths[0], true)
+		cur_obj         *Object          = pack.Index(0)
+		ref             *[]interface{}   = nil
+		ref_list        *[][]interface{} = nil
+		obj_stack       *lists.Stack     = lists.New_Stack(int(two_thirds(arr_size)), nil)
+		map_stack       *lists.Stack     = lists.New_Stack(int(two_thirds(arr_size)), 0)
+		sub_ctrlist     []uint           = make([]uint, two_thirds(arr_size))
+		cur_ctr         *uint            = &sub_ctrlist[0]
+		sub_ctrlist_ctr uint             = 0
+		args_ctr        uint             = 0
+		ref_ctr         uint             = 0
+		rl_ref_ctr      uint             = 0
+		rl_arg_ctr      uint             = 0
+		next_type       int              = mOWN_ARGS
 	)
 
 	len_ctr = 0
-	len_stack_ctr = 0
-	len_stack[0] = cur_ctr
-	obj_stack[0] = pack
 	*cur_ctr = 1
+	len_stack.Reset()
+	obj_stack.Push(pack)
 
-	next_arg := func(atomic bool) interface{} {
+	next_arg := func(atomic_ok bool) interface{} {
 		var ret interface{}
 
 		switch next_type {
 		case mOWN_ARGS:
 			ret = args[args_ctr]
 			args_ctr++
-		case mOTHER_ARGS:
+		case mREF_ARGS:
 			ret = (*ref)[ref_ctr]
 			ref_ctr++
-		case mATOMIC_LIST:
-			if !atomic {
-				panic("Arg specified as atomic in illegal context.")
-			}
-			panic("Atomic not implemented yet!")
+		case mREF_LIST:
+			assert(atomic_ok, "Arg specified as atomic in illegal context.")
+			ret = (*ref_list)[rl_ref_ctr][rl_arg_ctr]
+			rl_arg_ctr++
 		default:
 			panic("No type specified.")
 		}
 
 		return ret
-	}
-
-	inc_counters := func() {
-		obj_stack_ctr++
-		obj_stack[obj_stack_ctr] = cur_obj
-
-		len_stack_ctr++
-		len_stack[len_stack_ctr] = cur_ctr
-
-		sub_ctrlist_ctr++
-		cur_ctr = &sub_ctrlist[sub_ctrlist_ctr]
 	}
 
 	for _, ch := range format {
@@ -246,34 +224,52 @@ func Encode_fmt(size_hint uint, format string, args ...interface{}) *Object {
 
 		case '[':
 			len_ctr++
-			map_stack_ctr++
-			map_stack[map_stack_ctr] = 0
+			map_stack.Push(0)
 			pack.Encode_Array(&cur_obj, sub_lengths[len_ctr])
-			inc_counters()
+
+			obj_stack.Push(cur_obj)
+			len_stack.Push(cur_ctr)
+			sub_ctrlist_ctr++
+			cur_ctr = &sub_ctrlist[sub_ctrlist_ctr]
 
 		case '{':
 			len_ctr++
-			map_stack_ctr++
-			map_stack[map_stack_ctr] = 1
+			map_stack.Push(1)
 			pack.Encode_Map(&cur_obj, sub_lengths[len_ctr]/2)
-			inc_counters()
+
+			obj_stack.Push(cur_obj)
+			len_stack.Push(cur_ctr)
+			sub_ctrlist_ctr++
+			cur_ctr = &sub_ctrlist[sub_ctrlist_ctr]
 
 		case ']', '}':
-			obj_stack_ctr--
-			map_stack_ctr--
-			len_stack_ctr--
-			cur_ctr = len_stack[len_stack_ctr]
+			obj_stack.Pop()
+			map_stack.Pop()
+			cur_ctr = len_stack.Pop().(*uint)
 
 		case '!':
 			ref = next_arg(false).(*[]interface{})
-			next_type = mOTHER_ARGS
+			ref_ctr = 0
+			next_type = mREF_ARGS
 			continue
 
 		case '@':
-			panic("Atomic not implemented.")
+			ref_list = next_arg(false).(*[][]interface{})
+			rl_ref_ctr = 0
+			rl_arg_ctr = 0
+			next_type = mREF_LIST
+
+			assert((*ref_list)[rl_ref_ctr] != nil, "Ref list is nil")
+			continue
 
 		case '*':
-			panic("Atomic not implemented.")
+			assert(next_type == mREF_LIST, "'*' encountered in illegal context")
+			rl_ref_ctr++
+			rl_arg_ctr = 0
+			// eprintf("Incrementing argument list -> %d\n", rl_ref_ctr)
+
+			assert((*ref_list)[rl_ref_ctr] != nil, "Ref list is nil")
+			continue
 
 		case ':', '.', ' ', ',':
 			continue
@@ -282,66 +278,72 @@ func Encode_fmt(size_hint uint, format string, args ...interface{}) *Object {
 			panic("Not reachable.")
 		}
 
-		if map_stack[map_stack_ctr] != 0 {
-			// if x := uint(cap(obj_stack[obj_stack_ctr].Data.(*Map).entries)); x > (*cur_ctr / 2) {
-			if x := uint(cap(obj_stack[obj_stack_ctr].Data.([]Map_Entry))); x > (*cur_ctr / 2) {
+		if map_stack.Peek().(int) != 0 {
+			// eprintf("%v\n", map_stack)
+			x := uint(cap(obj_stack.Peek().(*Object).Data.([]Map_Entry)))
+			if x > (*cur_ctr / 2) {
 				if (*cur_ctr & 1) == 0 {
-					cur_obj = &(*obj_stack[obj_stack_ctr]).MapEnt(int(*cur_ctr / 2)).Key
+					cur_obj = &(obj_stack.Peek().(*Object).MapEnt(int(*cur_ctr / 2)).Key)
 				} else {
-					cur_obj = &(*obj_stack[obj_stack_ctr]).MapEnt(int(*cur_ctr / 2)).Value
+					cur_obj = &(obj_stack.Peek().(*Object).MapEnt(int(*cur_ctr / 2)).Value)
 				}
-			} else {
-				// eprintf("current cap is smaller than element number (%d vs %d)\n", x, (*cur_ctr / 2))
 			}
 		} else {
-			if x := uint(cap((*obj_stack[obj_stack_ctr]).Data.([]Object))); x > *cur_ctr {
-				cur_obj = (*obj_stack[obj_stack_ctr]).Index(int(*cur_ctr))
-			} else {
-				// eprintf("current cap is smaller than element number (%d vs %d)\n", x, (*cur_ctr / 2))
+			x := uint(cap(obj_stack.Peek().(*Object).Data.([]Object)))
+			if x > *cur_ctr {
+				cur_obj = obj_stack.Peek().(*Object).Index(int(*cur_ctr))
 			}
 		}
-
-		// mpack_dumb_dump(pack)
 
 		*cur_ctr++
 	}
 
+	// if ref_list != nil {
+	//         eprintf("pack -> %v\n", pack)
+	//         eprintf("size: %d\n", len(pack.Index(3).Index(0).Index(0).Data.([]Object)))
+	// }
 	return pack
 }
 
 //========================================================================================
 
-const ( // Additional possible paramaters for get_expect()
-	G_B_STRLIST = iota + 256
-	G_STRLIST
-	G_STRPTRLIST
-	G_STRING
-	G_INTLIST
-	G_MAP_STR_STR
-	G_MAP_STR_STRLIST
-	G_MAP_RUNE_RUNE
+const ( // Additional possible paramaters for Expect()
+	E_B_STRLIST = iota + 256
+	E_STRLIST
+	E_STRPTRLIST
+	E_STRING
+	E_INTLIST
+	E_MAP_STR_STR
+	E_MAP_STR_STRLIST
+	E_MAP_RUNE_RUNE
 )
 
 var expect_repr_strings = [8]string{
-	"G_B_STRLIST",
-	"G_STRLIST",
-	"G_STRPTRLIST",
-	"G_STRING",
-	"G_INTLIST",
-	"G_MAP_STR_STR",
-	"G_MAP_STR_STRLIST",
-	"G_MAP_RUNE_RUNE",
+	"E_B_STRLIST",
+	"E_STRLIST",
+	"E_STRPTRLIST",
+	"E_STRING",
+	"E_INTLIST",
+	"E_MAP_STR_STR",
+	"E_MAP_STR_STRLIST",
+	"E_MAP_RUNE_RUNE",
 }
 
-func (obj *Object) Get_Expect(expect int) interface{} {
-	eprintf("Got type type %s (expected %s)\n",
-		expect_repr(int(obj.Mtype)), expect_repr(expect))
+func (obj *Object) Expect(expect int) interface{} {
+	/* eprintf("Got type type %s (%d) (expected %s (%d))\n",
+	expect_repr(int(obj.Mtype)), obj.Mtype, expect_repr(expect), expect) */
 
 	if obj.Mtype == T_NIL {
 		eprintf("Expect: got nil value.\n")
+		if expect == T_NUM {
+			return 0
+		} else if expect == T_BOOL {
+			return false
+		}
 		return nil
 	}
-	if obj.Mtype != uint8(expect) {
+
+	if int(obj.Mtype) != expect {
 		switch obj.Mtype {
 		case T_EXT:
 			switch expect {
@@ -360,34 +362,28 @@ func (obj *Object) Get_Expect(expect int) interface{} {
 			}
 		case T_STRING:
 			switch expect {
-			case G_STRING:
+			case E_STRING:
 				return string(obj.Data.([]byte))
 			}
 		case T_ARRAY:
 			switch expect {
-			case G_B_STRLIST:
+			case E_B_STRLIST:
 				lst := make([][]byte, 0, 32)
 				for _, elem := range obj.Data.([]Object) {
 					if elem.Mtype == T_STRING {
 						lst = append(lst, elem.Data.([]byte))
 					}
 				}
-				/* if len(lst) == 0 {
-					panic("No strings found in array.")
-				} */
 				return lst
-			case G_STRLIST:
+			case E_STRLIST:
 				lst := make([]string, 0, 32)
 				for _, elem := range obj.Data.([]Object) {
 					if elem.Mtype == T_STRING {
 						lst = append(lst, string(elem.Data.([]byte)))
 					}
 				}
-				/* if len(lst) == 0 {
-					panic("No strings found in array.")
-				} */
 				return lst
-			case G_STRPTRLIST:
+			case E_STRPTRLIST:
 				lst := make([]*string, 0, 32)
 				for _, elem := range obj.Data.([]Object) {
 					if elem.Mtype == T_STRING {
@@ -395,14 +391,11 @@ func (obj *Object) Get_Expect(expect int) interface{} {
 						lst = append(lst, &tmp)
 					}
 				}
-				/* if len(lst) == 0 {
-					panic("No strings found in array.")
-				} */
 				return lst
-			case G_INTLIST:
+			case E_INTLIST:
 				lst := make([]int, 0, 32)
 				for _, elem := range obj.Data.([]Object) {
-					lst = append(lst, int(elem.Get_Expect(T_NUM).(int64)))
+					lst = append(lst, int(elem.Expect(T_NUM).(int64)))
 				}
 				if len(lst) == 0 {
 					panic("No integers found in array.")
@@ -411,11 +404,11 @@ func (obj *Object) Get_Expect(expect int) interface{} {
 			}
 		case T_MAP:
 			switch expect {
-			case G_MAP_STR_STR:
+			case E_MAP_STR_STR:
 				return mpack_map_to_str_str(obj)
-			case G_MAP_STR_STRLIST:
+			case E_MAP_STR_STRLIST:
 				return mpack_map_to_str_strlist(obj)
-			case G_MAP_RUNE_RUNE:
+			case E_MAP_RUNE_RUNE:
 				return mpack_map_to_rune_rune(obj)
 			}
 		}
@@ -439,9 +432,11 @@ func (obj *Object) Get_Expect(expect int) interface{} {
 	case T_BOOL:
 		return obj.Data.(bool)
 	default:
-		panic_fmt("Invalid type given to expect (%s).", expect_repr(expect))
-		panic("")
+		log.Panicf("Invalid type given to expect (%s) (obj type '%s').",
+			expect_repr(expect), Type_Repr[obj.Mtype])
 	}
+
+	return nil /* NOTREACHED */
 }
 
 func expect_repr(expect int) string {
@@ -449,6 +444,10 @@ func expect_repr(expect int) string {
 		return Type_Repr[expect]
 	}
 	return expect_repr_strings[expect-256]
+}
+
+func (obj *Object) TypeRepr() string {
+	return Type_Repr[obj.Mtype]
 }
 
 func mmap_ent_str_conv(obj *Object) string {
@@ -479,7 +478,7 @@ func mpack_map_to_str_strlist(obj *Object) map[string][]string {
 
 	for _, ent := range tmp {
 		key := mmap_ent_str_conv(&ent.Key)
-		val := ent.Value.Get_Expect(G_STRLIST).([]string)
+		val := ent.Value.Expect(E_STRLIST).([]string)
 		ret[key] = val
 	}
 

@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
+	"tag_highlight/archive"
 	ll "tag_highlight/linked_list"
 	"tag_highlight/mpack"
 )
@@ -33,7 +35,7 @@ type TopDir struct {
 	Gzfile   string
 	Pathname string
 	Tmpfname string
-	Tags     []bstr
+	Tags     []string
 }
 
 type Bufdata struct {
@@ -42,8 +44,9 @@ type Bufdata struct {
 	Num         uint16
 	Initialized bool
 	Filename    string
-	Cmd_Cache   []bstr
 	Lines       *ll.Linked_List
+	Buf         []string
+	Calls       *atomic_list
 	Ft          *Ftdata
 	Topdir      *TopDir
 }
@@ -107,7 +110,7 @@ func New_Buffer(fd, bufnum int) *Bufdata {
 		}
 	}
 
-	ft_str := Nvim_buf_get_option(fd, bufnum, "ft", mpack.G_STRING).(string)
+	ft_str := Nvim_buf_get_option(fd, bufnum, "ft", mpack.E_STRING).(string)
 	ft := id_filetype(ft_str)
 	if ft == nil {
 		echo("Failed to identify filetype '%s'.", ft)
@@ -146,7 +149,7 @@ func Null_Find_Buffer(bufnum int, bdata *Bufdata) *Bufdata {
 		bdata = Find_Buffer(bufnum)
 	}
 	if bdata == nil || is_bad_buf(bufnum) {
-		panic_fmt("Couldn't locate buffer %d.")
+		log.Panicf("Couldn't locate buffer %d.", bufnum)
 	}
 
 	return bdata
@@ -190,8 +193,9 @@ func get_bufdata(fd, bufnum int, ft *Ftdata) *Bufdata {
 		Ctick:       0,
 		Last_Ctick:  0,
 		Initialized: false,
-		Cmd_Cache:   nil,
+		Calls:       nil,
 		Lines:       ll.Make_New(),
+		Buf:         make([]string, 0, 1),
 		Topdir:      nil,
 	}
 
@@ -223,9 +227,9 @@ func init_topdir(fd int, bdata *Bufdata) *TopDir {
 
 	echo("Initializing new topdir \"%s\", ft %s", dirname, bdata.Ft.Vim_Name)
 
-	tmp_fname := Nvim_call_function(fd, "tempname", mpack.G_STRING).(string)
+	tmp_fname := Nvim_call_function(fd, "tempname", mpack.E_STRING).(string)
 	tmp := TopDir{
-		Gzfile:   HOME + ".vim_tags_go/",
+		Gzfile:   HOME + "/.vim_tags_go/",
 		Id:       bdata.Ft.Id,
 		Is_C:     is_c,
 		Pathname: dirname,
@@ -246,11 +250,11 @@ func init_topdir(fd int, bdata *Bufdata) *TopDir {
 	}
 
 	switch Settings.Comp_type {
-	case COMP_GZIP:
+	case archive.COMP_GZIP:
 		tmp.Gzfile += "." + bdata.Ft.Vim_Name + ".tags.gz"
-	case COMP_LZMA:
+	case archive.COMP_LZMA:
 		tmp.Gzfile += "." + bdata.Ft.Vim_Name + ".tags.xz"
-	case COMP_NONE:
+	case archive.COMP_NONE:
 		tmp.Gzfile += "." + bdata.Ft.Vim_Name + ".tags"
 	}
 
@@ -267,10 +271,10 @@ func init_filetype(fd int, ft *Ftdata) {
 	defer ftdata_mutex.Unlock()
 
 	ft.Initialized = true
-	ft.Order = Nvim_get_var_fmt(fd, mpack.G_STRING, "tag_highlight#%s#order", ft.Vim_Name).(string)
+	ft.Order = Nvim_get_var_fmt(fd, mpack.E_STRING, "tag_highlight#%s#order", ft.Vim_Name).(string)
 	ft.Ignored_Tags = Settings.Ignored_tags[ft.Vim_Name]
 
-	tmp := Nvim_get_var_fmt(fd, mpack.G_MAP_RUNE_RUNE, "tag_highlight#%s#equivalent", ft.Vim_Name)
+	tmp := Nvim_get_var_fmt(fd, mpack.E_MAP_RUNE_RUNE, "tag_highlight#%s#equivalent", ft.Vim_Name)
 	switch tmp.(type) {
 	case nil:
 		ft.Equiv = nil

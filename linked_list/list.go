@@ -1,7 +1,7 @@
 package ll
 
 import (
-	"fmt"
+	"log"
 )
 
 type Node struct {
@@ -125,57 +125,55 @@ func resolve_neg(val, base int) int {
 	}
 }
 
-func panic_fmt(format string, a ...interface{}) {
-	s := fmt.Sprintf(format, a...)
-	panic(s)
-}
+// func sanity_check1(data []interface{}) {
+//         if start < 0 || end < 1 || start == end {
+//                 log.Panicf("Illegal start (%d) and end (%d)", start, end)
+//         }
+//         if start > end {
+//                 log.Panicf("End (%d) cannot be greater than start (%d)", start, end)
+//         }
+//         if data == nil || len(data) == 0 {
+//                 panic("No data supplied")
+//         }
+//         if end < len(data) {
+//                 log.Panicf("End (%d) cannot be greater than the length of data (%d)", end, len(data))
+//         }
+// }
 
-func sanity_check1(start, end int, data []interface{}) {
-	if start < 0 || end < 1 || start == end {
-		panic_fmt("Illegal start (%d) and end (%d)", start, end)
-	}
-	if start > end {
-		panic_fmt("End (%d) cannot be greater than start (%d)", start, end)
-	}
-	if data == nil || len(data) == 0 {
-		panic("No data supplied")
-	}
-	if end < len(data) {
-		panic_fmt("End (%d) cannot be greater than the length of data (%d)", end, len(data))
-	}
-}
-
-func (list *Linked_List) create_nodes(start, end, i int, tmp []*Node, data []interface{}) int {
-	for x := (start + 1); x < end; x, i = x+1, i+1 {
+func (list *Linked_List) create_nodes(i int, tmp []*Node, data []interface{}) int {
+	for x := 1; x < len(data); x++ {
 		tmp[i] = &Node{}
 		tmp[i].Data = data[x]
 		tmp[i].Prev = tmp[i-1]
 		tmp[i-1].Next = tmp[i]
 
-		list.Qty++
+		// list.Qty++
+		i++
 	}
 
 	return i
 }
 
-func (list *Linked_List) Insert_Slice_After(at *Node, start, end int, data ...interface{}) {
-	start = resolve_neg(start, int(len(data)))
-	end = resolve_neg(end, int(len(data)))
-	sanity_check1(start, end, data)
+func (list *Linked_List) Insert_Slice_After(at *Node, data ...interface{}) {
+	// start = resolve_neg(start, int(len(data)))
+	// end = resolve_neg(end, int(len(data)))
+	// sanity_check1(start, end, data)
 
-	diff := end - start
+	// diff := end - start
+	diff := len(data)
+	// eprintf("Len: %d, start: '%v'\n", len(data), at)
 	if diff == 1 {
-		list.Insert_After(at, data[start])
+		list.Insert_After(at, data[0])
 		return
 	}
 
 	tmp := make([]*Node, diff)
 	tmp[0] = &Node{}
-	tmp[0].Data = data[start]
+	tmp[0].Data = data[0]
 	tmp[0].Prev = at
-	list.Qty++
+	// list.Qty++
 
-	last := list.create_nodes(start, end, 1, tmp, data) - 1
+	last := list.create_nodes(1, tmp, data) - 1
 
 	if at != nil {
 		tmp[last].Next = at.Next
@@ -193,33 +191,36 @@ func (list *Linked_List) Insert_Slice_After(at *Node, start, end int, data ...in
 	if list.Tail == nil || at == list.Tail {
 		list.Tail = tmp[last]
 	}
+
+	list.Qty += diff
 }
 
-func (list *Linked_List) Insert_Slice_Before(at *Node, start, end int, data ...interface{}) {
-	start = resolve_neg(start, int(len(data)))
-	end = resolve_neg(end, int(len(data)))
-	sanity_check1(start, end, data)
+func (list *Linked_List) Insert_Slice_Before(at *Node, data ...interface{}) {
+	// start = resolve_neg(start, int(len(data)))
+	// end = resolve_neg(end, int(len(data)))
+	// sanity_check1(start, end, data)
 
-	diff := end - start
+	// diff := end - start
+	diff := len(data)
+	// eprintf("Len: %d, start: '%v'\n", len(data), at)
 	if diff == 1 {
-		list.Insert_Before(at, data[start])
+		list.Insert_Before(at, data[0])
 		return
 	}
 
 	tmp := make([]*Node, diff)
 	tmp[0] = &Node{}
-	tmp[0].Data = data[start]
-	tmp[0].Prev = at
-	list.Qty++
+	tmp[0].Data = data[0]
+	// list.Qty++
 
-	last := list.create_nodes(start, end, 1, tmp, data) - 1
-	tmp[last].Next = at.Next
+	last := list.create_nodes(1, tmp, data) - 1
+	tmp[last].Next = at
 
 	if at != nil {
 		tmp[0].Prev = at.Prev
 		at.Prev = tmp[last]
 		if tmp[0].Prev != nil {
-			tmp[last].Prev.Next = tmp[0]
+			tmp[0].Prev.Next = tmp[0]
 		}
 	} else {
 		tmp[0].Prev = nil
@@ -231,6 +232,8 @@ func (list *Linked_List) Insert_Slice_Before(at *Node, start, end int, data ...i
 	if list.Tail == nil {
 		list.Tail = tmp[last]
 	}
+
+	list.Qty += diff
 }
 
 //========================================================================================
@@ -253,9 +256,9 @@ func (list *Linked_List) Delete_Node(node *Node) {
 }
 
 func (list *Linked_List) Delete_Range(at *Node, rng int) {
-	eprintf("Deleting range %d\n", rng)
+	// eprintf("Deleting range %d\n", rng)
 	if list.Qty < rng {
-		panic_fmt("Delete range (%d) cannot be larger than the list's size (%d)", rng, list.Qty)
+		log.Panicf("Delete range (%d) cannot be larger than the list's size (%d)", rng, list.Qty)
 	}
 
 	if rng == 0 {
@@ -305,9 +308,9 @@ func (list *Linked_List) Delete_Range(at *Node, rng int) {
 		list.Tail = prev
 	}
 
-	eprintf("qty is %d\n", list.Qty)
+	// eprintf("qty is %d\n", list.Qty)
 	list.Qty -= rng
-	eprintf("qty is %d\n", list.Qty)
+	// eprintf("qty is %d\n", list.Qty)
 }
 
 //========================================================================================
@@ -324,12 +327,12 @@ func (list *Linked_List) Insert_After_At(index int, data interface{}) {
 	list.Insert_After(list.At(index), data)
 }
 
-func (list *Linked_List) Insert_Slice_Before_At(index int, start, end int, data ...interface{}) {
-	list.Insert_Slice_Before(list.At(index), start, end, data...)
+func (list *Linked_List) Insert_Slice_Before_At(index int, data ...interface{}) {
+	list.Insert_Slice_Before(list.At(index), data...)
 }
 
-func (list *Linked_List) Insert_Slice_After_At(index int, start, end int, data ...interface{}) {
-	list.Insert_Slice_After(list.At(index), start, end, data...)
+func (list *Linked_List) Insert_Slice_After_At(index int, data ...interface{}) {
+	list.Insert_Slice_After(list.At(index), data...)
 }
 
 func (list *Linked_List) Delete_Node_At(index int) {
@@ -367,18 +370,18 @@ func (list *Linked_List) At(index int) *Node {
 	if index < ((list.Qty - 1) / 2) {
 		current = list.Head
 		for x = 0; current != nil && x != index; x++ {
-			eprintf("x: %d -> %v\n", x, current.Data)
+			// eprintf("x: %d -> %v\n", x, current.Data)
 			current = current.Next
 		}
 	} else {
 		current = list.Tail
 		for x = (list.Qty - 1); current != nil && x != index; x-- {
-			eprintf("x: %d -> %v\n", x, current.Data)
+			// eprintf("x: %d -> %v\n", x, current.Data)
 			current = current.Prev
 		}
 	}
 	if x != index {
-		panic_fmt("Couldn't find node at index %d", index)
+		log.Panicf("Couldn't find node at index %d", index)
 	}
 
 	return current
