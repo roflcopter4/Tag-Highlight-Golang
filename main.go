@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"tag_highlight/archive"
@@ -39,6 +40,7 @@ var (
 
 func main() {
 	// mpack.DEBUG = true
+
 	mpack.DEBUG = false
 	DEBUG = true
 	{
@@ -83,6 +85,8 @@ func main() {
 	if !Settings.Enabled {
 		os.Exit(0)
 	}
+
+	echo("%s\n", filepath.Join("arse", "turd"))
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	var initial_buf int = (-1)

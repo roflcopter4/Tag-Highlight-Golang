@@ -2,14 +2,14 @@ package main
 
 import (
 	"bufio"
-	"log"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 	"tag_highlight/archive"
-	ll "tag_highlight/linked_list"
+	"tag_highlight/lists"
 	"tag_highlight/mpack"
 )
 
@@ -44,15 +44,15 @@ type Bufdata struct {
 	Num         uint16
 	Initialized bool
 	Filename    string
-	Lines       *ll.Linked_List
 	Buf         []string
+	Lines       *lists.Linked_List
 	Calls       *atomic_list
 	Ft          *Ftdata
 	Topdir      *TopDir
 }
 
 const init_bufs int = 4096
-const ( // File types
+const ( // Filetypes
 	FT_NONE = iota
 	FT_C
 	FT_CPP
@@ -149,7 +149,7 @@ func Null_Find_Buffer(bufnum int, bdata *Bufdata) *Bufdata {
 		bdata = Find_Buffer(bufnum)
 	}
 	if bdata == nil || is_bad_buf(bufnum) {
-		log.Panicf("Couldn't locate buffer %d.", bufnum)
+		panic(fmt.Sprintf("Couldn't locate buffer %d.", bufnum))
 	}
 
 	return bdata
@@ -194,8 +194,8 @@ func get_bufdata(fd, bufnum int, ft *Ftdata) *Bufdata {
 		Last_Ctick:  0,
 		Initialized: false,
 		Calls:       nil,
-		Lines:       ll.Make_New(),
-		Buf:         make([]string, 0, 1),
+		Lines:       lists.New_List(),
+		Buf:         []string{},
 		Topdir:      nil,
 	}
 
@@ -206,12 +206,13 @@ func get_bufdata(fd, bufnum int, ft *Ftdata) *Bufdata {
 }
 
 func init_topdir(fd int, bdata *Bufdata) *TopDir {
-	dirname := filepath.Dir(bdata.Filename)
-	dirname = check_project_directories(dirname)
-	recurse := check_norecurse_directories(dirname)
-	is_c := bdata.Ft.Id == FT_C || bdata.Ft.Id == FT_CPP
+	var (
+		dirname = check_project_directories(filepath.Dir(bdata.Filename))
+		recurse = check_norecurse_directories(dirname)
+		is_c    = bdata.Ft.Id == FT_C || bdata.Ft.Id == FT_CPP
+		base    string
+	)
 
-	var base string
 	if !recurse || is_c {
 		base = bdata.Filename
 	} else {

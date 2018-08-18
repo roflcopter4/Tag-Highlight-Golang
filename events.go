@@ -2,10 +2,9 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"sync"
-	ll "tag_highlight/linked_list"
+	"tag_highlight/lists"
 	"tag_highlight/mpack"
 	"time"
 )
@@ -73,7 +72,6 @@ func handle_line_event(bdata *Bufdata, data *mpack.Object) {
 	}
 	if write_buf_updates {
 		write_lines(bdata.Lines)
-		// write_buf(&bdata.Buf)
 	}
 
 	bdata.Ctick = uint32(data.Index(1).Expect(mpack.T_NUM).(int64))
@@ -204,8 +202,8 @@ func handle_line_event(bdata *Bufdata, data *mpack.Object) {
 
 		if ctick := Nvim_buf_get_changedtick(0, int(bdata.Num)); ctick == int(bdata.Ctick) {
 			if n := Nvim_buf_line_count(0, int(bdata.Num)); n != bdata.Lines.Qty {
-				log.Panicf("Recorded size (%d) is incorrect, actual value"+
-					" is (%d), cannot continue.", bdata.Lines.Qty, n)
+				panic(fmt.Sprintf("Recorded size (%d) is incorrect, actual value"+
+					" is (%d), cannot continue.", bdata.Lines.Qty, n))
 			}
 		}
 		// if ctick := Nvim_buf_get_changedtick(0, int(bdata.Num)); ctick == int(bdata.Ctick) {
@@ -231,7 +229,7 @@ func id_event(event *mpack.Object) *event_id {
 	panic("Failed to identify event type.")
 }
 
-func write_lines(list *ll.Linked_List) {
+func write_lines(list *lists.Linked_List) {
 	echo("Writing, cur size is %d", list.Qty)
 	tmpfile := Nvim_call_function(0, "tempname", mpack.E_STRING).(string)
 	file := safe_fopen(tmpfile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0600)
@@ -241,7 +239,6 @@ func write_lines(list *ll.Linked_List) {
 	for cur := list.Head; cur != nil; cur = cur.Next {
 		file.WriteString(fmt.Sprintf("%d:\t%s\n", i, cur.Data.(string)))
 		i++
-		// file.WriteString(cur.Data.(string) + "\n")
 	}
 
 	echo("Done writing file - %s.", tmpfile)
@@ -250,7 +247,6 @@ func write_lines(list *ll.Linked_List) {
 func write_buf(buf *[]string) {
 	echo("Writing, cur size is %d", len(*buf))
 	tmpfile := Nvim_call_function(0, "tempname", mpack.E_STRING).(string)
-	// file := safe_fopen(tmpfile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_SYNC, 0600)
 	file := safe_fopen(tmpfile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	defer file.Close()
 

@@ -1,4 +1,4 @@
-package ll
+package lists
 
 import (
 	"log"
@@ -18,7 +18,7 @@ type Linked_List struct {
 
 //========================================================================================
 
-func Make_New() *Linked_List {
+func New_List() *Linked_List {
 	list := Linked_List{
 		Head: nil,
 		Tail: nil,

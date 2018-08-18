@@ -328,10 +328,11 @@ func find_file_in_dir_recurse(dirpath, find string) string {
 	}
 
 	if i := sort.SearchStrings(namelist, find); i < len(namelist) {
-		ret = dirpath + "/" + namelist[i]
+		// ret = dirpath + "/" + namelist[i]
+		ret = filepath.Join(dirpath, namelist[i])
 	} else {
 		for _, dir := range dirlist {
-			ret = find_file_in_dir_recurse(dirpath+"/"+dir, find)
+			ret = find_file_in_dir_recurse(filepath.Join(dirpath, dir), find)
 		}
 	}
 
@@ -345,7 +346,7 @@ func find_header_paths(src_dirs, includes []string) []string {
 		var (
 			file = includes[i]
 			path = includes[i+1]
-			tmp  = path + "/" + file
+			tmp  = filepath.Join(path, file)
 		)
 		if file == "" || path == "" {
 			continue
@@ -363,7 +364,7 @@ func find_header_paths(src_dirs, includes []string) []string {
 	for _, dir := range src_dirs {
 		for _, file := range includes {
 			if file != "" {
-				tmp := dir + "/" + file
+				tmp := filepath.Join(dir, file)
 				if _, e := os.Stat(tmp); e == nil {
 					headers = append(headers, tmp)
 				}
