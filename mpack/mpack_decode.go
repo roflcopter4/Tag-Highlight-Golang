@@ -1,8 +1,11 @@
 package mpack
 
 import (
-	"log"
+	// "bytes"
+	"fmt"
+	"sync"
 	"syscall"
+	// "tag_highlight/util"
 )
 
 const (
@@ -101,48 +104,126 @@ var m_masks = [29]mpack_mask{
 
 //========================================================================================
 
-func decode_int16(b []byte) int16 {
-	return (int16(b[0]) << 010) | int16(b[1])
-}
-
-func decode_int32(b []byte) int32 {
-	return ((int32(b[0]) << 030) | (int32(b[1]) << 020) |
-		(int32(b[2]) << 010) | int32(b[3]))
-}
-
-func decode_int64(b []byte) int64 {
-	return ((int64(b[0]) << 070) | (int64(b[1]) << 060) | (int64(b[2]) << 050) |
-		(int64(b[3]) << 040) | (int64(b[4]) << 030) | (int64(b[5]) << 020) |
-		(int64(b[6]) << 010) | int64(b[7]))
-}
-
-func decode_uint16(b []byte) uint16 {
-	return ((uint16(b[0]) << 010) | uint16(b[1]))
-}
-
-func decode_uint32(b []byte) uint32 {
-	return ((uint32(b[0]) << 030) | (uint32(b[1]) << 020) |
-		(uint32(b[2]) << 010) | uint32(b[3]))
-}
-
-func decode_uint64(b []byte) uint64 {
-	return ((uint64(b[0]) << 070) | (uint64(b[1]) << 060) | (uint64(b[2]) << 050) |
-		(uint64(b[3]) << 040) | (uint64(b[4]) << 030) | (uint64(b[5]) << 020) |
-		(uint64(b[6]) << 010) | uint64(b[7]))
-}
-
-//========================================================================================
+var (
+	// readbuffer           = make([]byte, 0x8000)
+	// leftover      []byte = nil
+	another_mutex = new(sync.Mutex)
+)
 
 func Decode_Stream(fd int) *Object {
 	var tmp interface{} = fd
-	return do_decode(
+	// var (
+	//         tmp   interface{} = fd
+	//         b     []byte
+	//         err   error
+	//         nread int
+	// )
+	// another_mutex.Lock()
+	// defer another_mutex.Unlock()
+	//
+	// do_read_op := func(block bool) {
+	//         if leftover == nil {
+	//                 if block {
+	//                         // if n, e := syscall.Select(1, &syscall.FdSet{Bits: [16]int64{int64(fd)}}, nil, nil, &syscall.Timeval{Sec: 3, Usec: 0}); e != nil {
+	//                         //         panic(e)
+	//                         // } else {
+	//                         //         util.Eprintf("Got %d...\n", n)
+	//                         // }
+	//                         nread, _, err = syscall.Recvfrom(fd, readbuffer, 0)
+	//                         if err != nil {
+	//                                 panic(err)
+	//                         }
+	//                 } else {
+	//                         nread, _, err = syscall.Recvfrom(fd, readbuffer, syscall.MSG_DONTWAIT)
+	//                         if err != nil && err != syscall.EAGAIN && err != syscall.EWOULDBLOCK {
+	//                                 panic(err)
+	//                         }
+	//                         if nread > 0 {
+	//                                 b = append(b, readbuffer[:nread]...)
+	//                         }
+	//                         return
+	//                 }
+	//                 if nread == len(readbuffer) {
+	//                         tmp := bytes.NewBuffer(readbuffer)
+	//                         // tmp.Read(readbuffer)
+	//
+	//                         for {
+	//                                 nread, _, err = syscall.Recvfrom(fd, readbuffer, syscall.MSG_DONTWAIT)
+	//                                 if err != nil && err != syscall.EAGAIN && err != syscall.EWOULDBLOCK {
+	//                                         panic(err)
+	//                                 }
+	//                                 if nread > 0 {
+	//                                         tmp.Read(readbuffer[:nread])
+	//                                 } else {
+	//                                         break
+	//                                 }
+	//                         }
+	//                         b = tmp.Bytes()
+	//                 } else {
+	//                         b = append(b, readbuffer[:nread]...)
+	//                 }
+	//                 util.Eprintf("read %d bytes with err %s\n", nread, err)
+	//         } else {
+	//                 util.Eprintf("There are leftovers (%d) -> %d\n", len(leftover), leftover)
+	//                 // var tmp *bytes.Buffer = bytes.NewBuffer(leftover)
+	//                 tmp := bytes.NewBuffer(leftover)
+	//                 util.Eprintf("Read: %d -> %v\n", tmp.Len(), tmp.Bytes())
+	//
+	//                 nread, _, err = syscall.Recvfrom(fd, readbuffer, syscall.MSG_DONTWAIT)
+	//                 if err != nil && err != syscall.EAGAIN && err != syscall.EWOULDBLOCK {
+	//                         panic(err)
+	//                 }
+	//                 if nread > 0 {
+	//                         tmp.Read(leftover)
+	//                 }
+	//                 for nread > 0 {
+	//                         nread, _, err = syscall.Recvfrom(fd, readbuffer, syscall.MSG_DONTWAIT)
+	//                         if err != nil && err != syscall.EAGAIN && err != syscall.EWOULDBLOCK {
+	//                                 panic(err)
+	//                         }
+	//                         tmp.Read(readbuffer[:nread])
+	//                 }
+	//                 b = tmp.Bytes()
+	//                 util.Eprintf("read: %d, e: %s\n", len(b), err)
+	//                 leftover = nil
+	//         }
+	// }
+	// do_read_op(true)
+
+	ret := do_decode(
 		func(src *interface{}, dest []byte, nbytes uint) {
 			fd := (*src).(int)
-			n, e := syscall.Read(fd, dest[:nbytes])
-			if e != nil || uint(n) != nbytes {
-				panic(e)
+			// n, e := syscall.Read(fd, dest[:nbytes])
+			// n, e := syscall.Read(fd, dest[:nbytes])
+			// if e != nil || uint(n) != nbytes {
+			//         panic(e)
+			// }
+
+			nread, _, err := syscall.Recvfrom(fd, dest[:nbytes], 0)
+			if err != nil || (nread) != int(nbytes) {
+				panic(err)
 			}
+			// do_read_op(false)
+			// copy(dest, b[:nbytes])
+			// b = b[nbytes:]
 		}, &tmp)
+
+	// if len(b) > 0 {
+	//         leftover = b
+	// } else {
+	//         leftover = nil
+	// }
+
+	return ret
+
+	// return do_decode(
+	//         func(src *interface{}, dest []byte, nbytes uint) {
+	//                 fd := (*src).(int)
+	//                 n, e := syscall.Read(fd, dest[:nbytes])
+	//                 if e != nil || uint(n) != nbytes {
+	//                         panic(e)
+	//                 }
+	//         }, &tmp)
 }
 
 func (obj *Object) Decode(str []byte) *Object {
@@ -186,7 +267,7 @@ func do_decode(read read_fn, src *interface{}) *Object {
 	case grp_BIN:
 		panic("Bin is not implemented.")
 	default:
-		log.Panicf("Default reached. grp: %d, obj: %v", mask.group, mask)
+		panic(fmt.Sprintf("Default reached. grp: %d, obj: %v", mask.group, mask))
 	}
 	return nil
 }
@@ -460,4 +541,36 @@ func id_pack_type(b byte) *mpack_mask {
 	}
 
 	return ret
+}
+
+//========================================================================================
+
+func decode_int16(b []byte) int16 {
+	return (int16(b[0]) << 010) | int16(b[1])
+}
+
+func decode_int32(b []byte) int32 {
+	return ((int32(b[0]) << 030) | (int32(b[1]) << 020) |
+		(int32(b[2]) << 010) | int32(b[3]))
+}
+
+func decode_int64(b []byte) int64 {
+	return ((int64(b[0]) << 070) | (int64(b[1]) << 060) | (int64(b[2]) << 050) |
+		(int64(b[3]) << 040) | (int64(b[4]) << 030) | (int64(b[5]) << 020) |
+		(int64(b[6]) << 010) | int64(b[7]))
+}
+
+func decode_uint16(b []byte) uint16 {
+	return ((uint16(b[0]) << 010) | uint16(b[1]))
+}
+
+func decode_uint32(b []byte) uint32 {
+	return ((uint32(b[0]) << 030) | (uint32(b[1]) << 020) |
+		(uint32(b[2]) << 010) | uint32(b[3]))
+}
+
+func decode_uint64(b []byte) uint64 {
+	return ((uint64(b[0]) << 070) | (uint64(b[1]) << 060) | (uint64(b[2]) << 050) |
+		(uint64(b[3]) << 040) | (uint64(b[4]) << 030) | (uint64(b[5]) << 020) |
+		(uint64(b[6]) << 010) | uint64(b[7]))
 }

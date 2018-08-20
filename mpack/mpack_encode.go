@@ -94,7 +94,7 @@ func (root *Object) Encode_Integer(item **Object, value int64) {
 			root.packed = append(root.packed, mMASK_INT_64)
 			encode_int64(&root.packed, int64(value))
 		default:
-			panic("Value is too large to encode.")
+			panic("Value is too small to encode.")
 		}
 	}
 }

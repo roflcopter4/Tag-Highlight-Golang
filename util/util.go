@@ -1,4 +1,17 @@
-package main
+package util
+
+// [>
+// #include <stdint.h>
+// static double
+// ldouble_wrap(const uint64_t nsec1, const uint64_t nsec2)
+// {
+//         static const long double sec = 1000000000.0L;
+//         long double              x   = ((long double)nsec2) -
+//                                        ((long double)nsec1);
+//         return (double)(x / sec);
+// }
+// */
+// import "C"
 
 import (
 	"bytes"
@@ -8,44 +21,40 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
-	"time"
 )
 
-func Func() bstr {
+var Logfiles map[string]*os.File
+
+func FuncName() []byte {
 	pc, _, _, _ := runtime.Caller(1)
 	fn := runtime.FuncForPC(pc)
 	elems := strings.Split(fn.Name(), ".")
-	return bstr(elems[len(elems)-1])
+	return []byte(elems[len(elems)-1])
 }
 
 func Eprintf(format string, a ...interface{}) {
 	fmt.Fprintf(os.Stderr, format, a...)
 }
 
-func warn(format string, a ...interface{}) {
+func Warn(format string, a ...interface{}) {
 	fmt.Fprintf(os.Stderr, "WARNING: "+format, a...)
 }
 
-func fsleep(length float64) {
-	ilen := time.Duration(length * float64(time.Second))
-	time.Sleep(ilen)
-}
-
-func max_int(a, b int) int {
+func Max_Int(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
 }
 
-func min_int(a, b int) int {
+func Min_Int(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
 }
 
-func safe_fopen(fname string, mode, perm int) *os.File {
+func Safe_Fopen(fname string, mode, perm int) *os.File {
 	file, e := os.OpenFile(fname, mode, os.FileMode(perm))
 	if e != nil {
 		panic(e)
@@ -53,7 +62,7 @@ func safe_fopen(fname string, mode, perm int) *os.File {
 	return file
 }
 
-func safe_open(fname string, mode, perm int) int {
+func Safe_Open(fname string, mode, perm int) int {
 	fd, e := syscall.Open(fname, mode, uint32(perm))
 	if e != nil {
 		panic(e)
@@ -61,13 +70,21 @@ func safe_open(fname string, mode, perm int) int {
 	return fd
 }
 
-func assert(cond bool, mes string, a ...interface{}) {
+func Assert(cond bool, mes string, a ...interface{}) {
 	if !cond {
 		panic(fmt.Sprintf(mes, a...))
 	}
 }
 
-func quick_read(filename string) []byte {
+func Boolint(b bool) int {
+	if b {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+func Quick_Read(filename string) []byte {
 	// st, e := os.Stat(filename)
 	// if e != nil {
 	//         return nil
@@ -100,7 +117,7 @@ func quick_read(filename string) []byte {
 	return buf.Bytes()
 }
 
-func unique_str(strlist []string) []string {
+func Unique_Str(strlist []string) []string {
 	keys := make(map[string]bool)
 	ret := []string{}
 

@@ -7,17 +7,19 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
+	sys "syscall"
+	"tag_highlight/api"
 	"tag_highlight/archive"
 	"tag_highlight/lists"
 	"tag_highlight/mpack"
+	"tag_highlight/util"
 )
 
 type Ftdata struct {
 	Equiv             map[rune]rune
-	Ignored_Tags      []string
-	Restore_Cmds      string
-	Order             string
+	Ignored_Tags      [][]byte
+	Order             []byte
+	Restore_Cmds      []byte
 	Vim_Name          string
 	Ctags_Name        string
 	Id                uint16
@@ -35,7 +37,7 @@ type TopDir struct {
 	Gzfile   string
 	Pathname string
 	Tmpfname string
-	Tags     []string
+	Tags     [][]byte
 }
 
 type Bufdata struct {
@@ -44,9 +46,8 @@ type Bufdata struct {
 	Num         uint16
 	Initialized bool
 	Filename    string
-	Buf         []string
 	Lines       *lists.Linked_List
-	Calls       *atomic_list
+	Calls       *api.Atomic_list
 	Ft          *Ftdata
 	Topdir      *TopDir
 }
@@ -74,6 +75,7 @@ const ( // Filetypes
 var (
 	TopDir_List  []*TopDir
 	ftdata_mutex sync.Mutex
+	seen_files   = []string{}
 )
 var buffers struct {
 	lst         [init_bufs]*Bufdata
@@ -82,22 +84,22 @@ var buffers struct {
 	bad_buf_mkr int
 }
 var Ftdata_List = [16]Ftdata{
-	{nil, nil, "", "", "NONE", "NONE", FT_NONE, false, false},
-	{nil, nil, "", "", "c", "c", FT_C, false, false},
-	{nil, nil, "", "", "cpp", "c++", FT_CPP, false, false},
-	{nil, nil, "", "", "cs", "csharp", FT_CSHARP, false, false},
-	{nil, nil, "", "", "go", "go", FT_GO, false, false},
-	{nil, nil, "", "", "java", "java", FT_JAVA, false, false},
-	{nil, nil, "", "", "javascript", "javascript", FT_JAVASCRIPT, false, false},
-	{nil, nil, "", "", "lisp", "lisp", FT_LISP, false, false},
-	{nil, nil, "", "", "perl", "perl", FT_PERL, false, false},
-	{nil, nil, "", "", "php", "php", FT_PHP, false, false},
-	{nil, nil, "", "", "python", "python", FT_PYTHON, false, false},
-	{nil, nil, "", "", "ruby", "ruby", FT_RUBY, false, false},
-	{nil, nil, "", "", "rust", "rust", FT_RUST, false, false},
-	{nil, nil, "", "", "sh", "sh", FT_SHELL, false, false},
-	{nil, nil, "", "", "vim", "vim", FT_VIM, false, false},
-	{nil, nil, "", "", "zsh", "zsh", FT_ZSH, false, false},
+	{nil, nil, nil, nil, "NONE", "NONE", FT_NONE, false, false},
+	{nil, nil, nil, nil, "c", "c", FT_C, false, false},
+	{nil, nil, nil, nil, "cpp", "c++", FT_CPP, false, false},
+	{nil, nil, nil, nil, "cs", "csharp", FT_CSHARP, false, false},
+	{nil, nil, nil, nil, "go", "go", FT_GO, false, false},
+	{nil, nil, nil, nil, "java", "java", FT_JAVA, false, false},
+	{nil, nil, nil, nil, "javascript", "javascript", FT_JAVASCRIPT, false, false},
+	{nil, nil, nil, nil, "lisp", "lisp", FT_LISP, false, false},
+	{nil, nil, nil, nil, "perl", "perl", FT_PERL, false, false},
+	{nil, nil, nil, nil, "php", "php", FT_PHP, false, false},
+	{nil, nil, nil, nil, "python", "python", FT_PYTHON, false, false},
+	{nil, nil, nil, nil, "ruby", "ruby", FT_RUBY, false, false},
+	{nil, nil, nil, nil, "rust", "rust", FT_RUST, false, false},
+	{nil, nil, nil, nil, "sh", "sh", FT_SHELL, false, false},
+	{nil, nil, nil, nil, "vim", "vim", FT_VIM, false, false},
+	{nil, nil, nil, nil, "zsh", "zsh", FT_ZSH, false, false},
 }
 
 //========================================================================================
@@ -105,15 +107,15 @@ var Ftdata_List = [16]Ftdata{
 func New_Buffer(fd, bufnum int) *Bufdata {
 	for _, num := range buffers.bad_bufs {
 		if uint16(bufnum) == num {
-			Eprintf("Buf is bad\n")
+			util.Eprintf("Buf is bad\n")
 			return nil
 		}
 	}
 
-	ft_str := Nvim_buf_get_option(fd, bufnum, "ft", mpack.E_STRING).(string)
+	ft_str := api.Nvim_buf_get_option(fd, bufnum, []byte("ft"), mpack.E_STRING).(string)
 	ft := id_filetype(ft_str)
 	if ft == nil {
-		echo("Failed to identify filetype '%s'.", ft)
+		api.Echo("Failed to identify filetype '%s'.", ft)
 		add_bad_buf(bufnum)
 		return nil
 	}
@@ -157,12 +159,14 @@ func Null_Find_Buffer(bufnum int, bdata *Bufdata) *Bufdata {
 
 func Remove_Buffer(bufnum int) {
 	index, bdata := find_buffer_index(bufnum)
+	log_seen_file(bdata.Filename)
+
 	if bdata.Topdir != nil {
 		topdir := bdata.Topdir
 		topdir.refs--
 		if topdir.refs == 0 {
-			syscall.Close(int(topdir.Tmpfd))
-			syscall.Unlink(topdir.Tmpfname)
+			sys.Close(int(topdir.Tmpfd))
+			sys.Unlink(topdir.Tmpfname)
 
 			var i int = (-1)
 			for x, t := range TopDir_List {
@@ -187,7 +191,7 @@ func Remove_Buffer(bufnum int) {
 
 func get_bufdata(fd, bufnum int, ft *Ftdata) *Bufdata {
 	bdata := Bufdata{
-		Filename:    Nvim_buf_get_name(fd, bufnum),
+		Filename:    api.Nvim_buf_get_name(fd, bufnum),
 		Ft:          ft,
 		Num:         uint16(bufnum),
 		Ctick:       0,
@@ -195,7 +199,6 @@ func get_bufdata(fd, bufnum int, ft *Ftdata) *Bufdata {
 		Initialized: false,
 		Calls:       nil,
 		Lines:       lists.New_List(),
-		Buf:         []string{},
 		Topdir:      nil,
 	}
 
@@ -226,9 +229,9 @@ func init_topdir(fd int, bdata *Bufdata) *TopDir {
 		}
 	}
 
-	echo("Initializing new topdir \"%s\", ft %s", dirname, bdata.Ft.Vim_Name)
+	api.Echo("Initializing new topdir \"%s\", ft %s", dirname, bdata.Ft.Vim_Name)
 
-	tmp_fname := Nvim_call_function(fd, "tempname", mpack.E_STRING).(string)
+	tmp_fname := api.Nvim_call_function(fd, []byte("tempname"), mpack.E_STRING).(string)
 	tmp := TopDir{
 		Gzfile:   HOME + "/.vim_tags_go/",
 		Id:       bdata.Ft.Id,
@@ -236,7 +239,7 @@ func init_topdir(fd int, bdata *Bufdata) *TopDir {
 		Pathname: dirname,
 		Recurse:  recurse,
 		Tags:     nil,
-		Tmpfd:    int16(safe_open(tmp_fname, os.O_CREATE|os.O_RDWR|os.O_SYNC, 0600)),
+		Tmpfd:    int16(util.Safe_Open(tmp_fname, sys.O_CREAT|sys.O_RDWR|sys.O_DSYNC, 0600)),
 		Tmpfname: tmp_fname,
 		index:    uint16(len(TopDir_List)),
 		refs:     1,
@@ -272,10 +275,10 @@ func init_filetype(fd int, ft *Ftdata) {
 	defer ftdata_mutex.Unlock()
 
 	ft.Initialized = true
-	ft.Order = Nvim_get_var_fmt(fd, mpack.E_STRING, "tag_highlight#%s#order", ft.Vim_Name).(string)
+	ft.Order = api.Nvim_get_var_fmt(fd, mpack.E_BYTES, "tag_highlight#%s#order", ft.Vim_Name).([]byte)
 	ft.Ignored_Tags = Settings.Ignored_tags[ft.Vim_Name]
 
-	tmp := Nvim_get_var_fmt(fd, mpack.E_MAP_RUNE_RUNE, "tag_highlight#%s#equivalent", ft.Vim_Name)
+	tmp := api.Nvim_get_var_fmt(fd, mpack.E_MAP_RUNE_RUNE, "tag_highlight#%s#equivalent", ft.Vim_Name)
 	switch tmp.(type) {
 	case nil:
 		ft.Equiv = nil
@@ -298,7 +301,10 @@ func check_project_directories(dirname string) string {
 
 	scanner := bufio.NewScanner(fp)
 	for scanner.Scan() {
-		if s := scanner.Text(); strings.Contains(s, dirname) {
+		s := scanner.Text()
+		api.Echo("Found text '%s'", s)
+		if strings.HasPrefix(dirname, s) {
+			api.Echo("Found prefix...")
 			candidates = append(candidates, s)
 		}
 	}
@@ -314,6 +320,7 @@ func check_project_directories(dirname string) string {
 		}
 	}
 
+	api.Echo("Using %d -> %s", x, candidates[x])
 	return candidates[x]
 }
 
@@ -361,4 +368,19 @@ func find_buffer_index(bufnum int) (int, *Bufdata) {
 		}
 	}
 	return (-1), nil
+}
+
+func have_seen_file(fname string) bool {
+	for _, f := range seen_files {
+		if fname == f {
+			return true
+		}
+	}
+	return false
+}
+
+func log_seen_file(fname string) {
+	if !have_seen_file(fname) {
+		seen_files = append(seen_files, fname)
+	}
 }

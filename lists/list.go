@@ -1,7 +1,9 @@
 package lists
 
 import (
+	"bytes"
 	"log"
+	"tag_highlight/util"
 )
 
 type Node struct {
@@ -61,6 +63,52 @@ func (list *Linked_List) Append(data interface{}) {
 	list.Tail = &node
 
 	list.Qty++
+}
+
+func (list *Linked_List) Join(str []byte) []byte {
+	/* if list == nil || list.Qty == 0 {
+		return ""
+	}
+	var buf string */
+	var buf bytes.Buffer
+	buf.Grow(0x4000)
+
+	for node := list.Head; node != nil; node = node.Next {
+		// buf += node.Data.(string) + str
+		buf.WriteString(node.Data.(string))
+		buf.Write(str)
+	}
+
+	/* for node := list.Head; node != nil; node = node.Next {
+		switch list.Head.Data.(type) {
+		case string:
+			buf += node.Data.(string) + str
+		case *string:
+			buf += *node.Data.(*string) + str
+		case []byte:
+			buf += string(node.Data.([]byte)) + str
+		case *[]byte:
+			buf += string(*node.Data.(*[]byte)) + str
+		case []rune:
+			buf += string(node.Data.([]rune)) + str
+		case *[]rune:
+			buf += string(*node.Data.(*[]rune)) + str
+		default:
+			// panic("Node data type is not a string type I can recognize: cannot join.")
+		}
+	} */
+
+	return buf.Bytes()
+}
+
+func (list *Linked_List) MakeSliceStr() []string {
+	ret := make([]string, list.Qty)
+	i := 0
+	for node := list.Head; node != nil; node = node.Next {
+		ret[i] = node.Data.(string)
+		i++
+	}
+	return ret
 }
 
 //========================================================================================
@@ -161,7 +209,7 @@ func (list *Linked_List) Insert_Slice_After(at *Node, data ...interface{}) {
 
 	// diff := end - start
 	diff := len(data)
-	// eprintf("Len: %d, start: '%v'\n", len(data), at)
+	// util.Eprintf("Len: %d, start: '%v'\n", len(data), at)
 	if diff == 1 {
 		list.Insert_After(at, data[0])
 		return
@@ -202,7 +250,7 @@ func (list *Linked_List) Insert_Slice_Before(at *Node, data ...interface{}) {
 
 	// diff := end - start
 	diff := len(data)
-	// eprintf("Len: %d, start: '%v'\n", len(data), at)
+	// util.Eprintf("Len: %d, start: '%v'\n", len(data), at)
 	if diff == 1 {
 		list.Insert_Before(at, data[0])
 		return
@@ -256,7 +304,7 @@ func (list *Linked_List) Delete_Node(node *Node) {
 }
 
 func (list *Linked_List) Delete_Range(at *Node, rng int) {
-	// eprintf("Deleting range %d\n", rng)
+	// util.Eprintf("Deleting range %d\n", rng)
 	if list.Qty < rng {
 		log.Panicf("Delete range (%d) cannot be larger than the list's size (%d)", rng, list.Qty)
 	}
@@ -308,9 +356,9 @@ func (list *Linked_List) Delete_Range(at *Node, rng int) {
 		list.Tail = prev
 	}
 
-	// eprintf("qty is %d\n", list.Qty)
+	// util.Eprintf("qty is %d\n", list.Qty)
 	list.Qty -= rng
-	// eprintf("qty is %d\n", list.Qty)
+	// util.Eprintf("qty is %d\n", list.Qty)
 }
 
 //========================================================================================
@@ -358,7 +406,7 @@ func (list *Linked_List) At(index int) *Node {
 
 	index = resolve_neg(index, list.Qty)
 	if index < 0 || index > list.Qty {
-		eprintf("Warning: Cannot find node at index %d (list qty: %d)\n",
+		util.Eprintf("Warning: Cannot find node at index %d (list qty: %d)\n",
 			index, list.Qty)
 	}
 
@@ -370,13 +418,13 @@ func (list *Linked_List) At(index int) *Node {
 	if index < ((list.Qty - 1) / 2) {
 		current = list.Head
 		for x = 0; current != nil && x != index; x++ {
-			// eprintf("x: %d -> %v\n", x, current.Data)
+			// util.Eprintf("x: %d -> %v\n", x, current.Data)
 			current = current.Next
 		}
 	} else {
 		current = list.Tail
 		for x = (list.Qty - 1); current != nil && x != index; x-- {
-			// eprintf("x: %d -> %v\n", x, current.Data)
+			// util.Eprintf("x: %d -> %v\n", x, current.Data)
 			current = current.Prev
 		}
 	}
@@ -403,7 +451,7 @@ func (list *Linked_List) Verify_Size() bool {
 	}
 	ret := i == list.Qty
 	if !ret {
-		eprintf("Size %d is not correct (%d)\n", list.Qty, i)
+		util.Eprintf("Size %d is not correct (%d)\n", list.Qty, i)
 		list.Qty = i
 	}
 	return ret

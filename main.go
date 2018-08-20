@@ -3,12 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	// "os/signal"
 	"runtime"
+	// "runtime/pprof"
 	"syscall"
+	"tag_highlight/api"
 	"tag_highlight/archive"
 	"tag_highlight/mpack"
-	"time"
+	"tag_highlight/util"
 )
 
 type bstr = []byte
@@ -16,33 +18,37 @@ type bstr = []byte
 type settings_t struct {
 	Comp_type       uint16
 	Comp_level      uint16
+	Ignored_tags    map[string][][]byte
 	Ctags_args      []string
-	Enabled         bool
 	Ignored_ftypes  []string
-	Ignored_tags    map[string][]string
 	Norecurse_dirs  []string
 	Settings_file   string
+	Enabled         bool
 	Use_compression bool
 	Verbose         bool
 }
 
 var (
-	Logfiles      = make(map[string]*os.File, 10)
-	read_fd  int  = (-1)
-	Sockfd   int  = (-1)
-	DEBUG    bool = false
+	read_fd int = (-1)
+	// Sockfd   int  = (-1)
+	DEBUG    bool
 	HOME     string
 	src_dir  string
+	logdir   string
 	Settings settings_t
 )
 
 //========================================================================================
 
 func main() {
-	// mpack.DEBUG = true
-
+	timer := util.NewTimer()
+	DEBUG = false
 	mpack.DEBUG = false
-	DEBUG = true
+	util.Logfiles = make(map[string]*os.File, 10)
+	util.SetEcho(api.Echo)
+
+	// signal.
+
 	{
 		var b bool
 		HOME, b = os.LookupEnv("HOME")
@@ -51,62 +57,65 @@ func main() {
 		}
 		src_dir = HOME + "/go/src/tag_highlight"
 	}
-	logdir := src_dir + "/.logs"
+	logdir = src_dir + "/.logs"
 
 	if e := syscall.Mkdir(logdir, 0755); e != nil && e != syscall.EEXIST {
 		panic(e)
 	}
-	// Logfiles["nvim"] = safe_fopen(logdir+"/nvim.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
-	// Logfiles["main"] = safe_fopen(logdir+"/main.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
-	// Logfiles["cmds"] = safe_fopen(logdir+"/cms.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	// Logfiles["nvim"] = util.safe_fopen(logdir+"/nvim.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	// Logfiles["main"] = util.safe_fopen(logdir+"/main.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	// Logfiles["cmds"] = util.safe_fopen(logdir+"/cms.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	// defer Logfiles["nvim"].Close()
 	// defer Logfiles["main"].Close()
 	// defer Logfiles["cmds"].Close()
+	// util.Logfiles["taglst"] = util.Safe_Fopen(logdir+"/tag_list.log", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	// defer util.Logfiles["taglst"].Close()
 
 	// read_fd = safe_open(HOME+"/decode_raw.log", os.O_RDONLY, 0644)
 	read_fd = 0
 	// defer syscall.Close(read_fd)
 
-	Sockfd = create_socket()
-	Eprintf("Created socket fd %d!\n", Sockfd)
+	// prof_f := util.Safe_Fopen(logdir+"/prof.prof", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
+	// err := pprof.StartCPUProfile(prof_f)
+	// util.Assert(err == nil, fmt.Sprintf("couldn't start profiling... -> %v", err))
+	// defer pprof.StopCPUProfile()
+	// defer prof_f.Close()
+
+	api.Sockfd = create_socket()
+	util.Eprintf("Created socket fd %d!\n", api.Sockfd)
 
 	Settings = settings_t{
 		Comp_type:       get_compression_type(0),
-		Comp_level:      uint16(Nvim_get_var(0, pkg("compression_level"), mpack.T_NUM).(int64)),
-		Ctags_args:      Nvim_get_var(0, pkg("ctags_args"), mpack.E_STRLIST).([]string),
-		Enabled:         Nvim_get_var(0, pkg("enabled"), mpack.T_BOOL).(bool),
-		Ignored_ftypes:  Nvim_get_var(0, pkg("ignore"), mpack.E_STRLIST).([]string),
-		Ignored_tags:    Nvim_get_var(0, pkg("ignored_tags"), mpack.E_MAP_STR_STRLIST).(map[string][]string),
-		Norecurse_dirs:  Nvim_get_var(0, pkg("norecurse_dirs"), mpack.E_STRLIST).([]string),
-		Settings_file:   Nvim_get_var(0, pkg("settings_file"), mpack.E_STRING).(string),
-		Use_compression: Nvim_get_var(0, pkg("use_compression"), mpack.T_BOOL).(bool),
-		Verbose:         Nvim_get_var(0, pkg("verbose"), mpack.T_BOOL).(bool),
+		Comp_level:      uint16(api.Nvim_get_var(0, pkg("compression_level"), mpack.T_NUM).(int64)),
+		Ctags_args:      api.Nvim_get_var(0, pkg("ctags_args"), mpack.E_STRLIST).([]string),
+		Enabled:         api.Nvim_get_var(0, pkg("enabled"), mpack.T_BOOL).(bool),
+		Ignored_ftypes:  api.Nvim_get_var(0, pkg("ignore"), mpack.E_STRLIST).([]string),
+		Ignored_tags:    api.Nvim_get_var(0, pkg("ignored_tags"), mpack.E_MAP_STR_BYTELIST).(map[string][][]byte),
+		Norecurse_dirs:  api.Nvim_get_var(0, pkg("norecurse_dirs"), mpack.E_STRLIST).([]string),
+		Settings_file:   api.Nvim_get_var(0, pkg("settings_file"), mpack.E_STRING).(string),
+		Use_compression: api.Nvim_get_var(0, pkg("use_compression"), mpack.T_BOOL).(bool),
+		Verbose:         api.Nvim_get_var(0, pkg("verbose"), mpack.T_BOOL).(bool),
 	}
 	if !Settings.Enabled {
 		os.Exit(0)
 	}
 
-	echo("%s\n", filepath.Join("arse", "turd"))
-
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	var initial_buf int = (-1)
-
-	tv1 := time.Now()
-	// var tv1 syscall.Timeval
 
 	for attempts := 0; buffers.mkr == 0; attempts++ {
 		if attempts > 0 {
 			if len(buffers.bad_bufs) > 0 {
 				buffers.bad_bufs = []uint16{}
 			}
-			// fsleep(3.0)
-			echo("Retrying initial connection (attempt %d)", attempts)
+			util.Fsleep(3.0)
+			api.Echo("Retrying initial connection (attempt %d)", attempts)
 		}
 
-		initial_buf = Nvim_get_current_buf(0)
+		initial_buf = api.Nvim_get_current_buf(0)
 		if New_Buffer(0, initial_buf) != nil {
 			bdata := Find_Buffer(initial_buf)
-			Nvim_buf_attach(1, initial_buf)
+			api.Nvim_buf_attach(1, initial_buf)
 
 			bdata.get_initial_lines()
 			bdata.Get_Initial_Taglist()
@@ -115,19 +124,20 @@ func main() {
 			// var tv2 syscall.Timespec
 			// syscall.C
 
-			tv2 := time.Now()
-			// echo("Initial startup time: %f", (float64(tv1.))/float64(time.Second))
-			// echo("Initial startup time: %s", time.Since(tv1).String())
+			// tv2 := time.Now()
+			// api.Echo("Initial startup time: %f", (float64(tv1.))/float64(time.Second))
+			// api.Echo("Initial startup time: %s", time.Since(tv1).String())
 			// syscall.Gettimeofday
-			echo("%dns - %ds", tv2.Nanosecond(), tv2.Second())
-			echo("Initial startup time: %f", tdiff(&tv1, &tv2))
+			// api.Echo("Initial startup time: %.10f", util.Tdiff(&tv1, &tv2))
+			// util.Timer("startup", &tv1, &tv2)
+			timer.EchoReport("initialization")
 		}
 	}
 
 	for {
-		event := Decode_Nvim_Stream(1, MES_NOTIFICATION)
+		event := api.Decode_Nvim_Stream(1, api.MES_NOTIFICATION)
 		if event != nil {
-			event.Print(Logfiles["main"])
+			event.Print(util.Logfiles["main"])
 			handle_nvim_event(event)
 		}
 	}
@@ -151,14 +161,14 @@ func main_loop(bufnum int) {
 	sock := create_socket()
 
 	{
-		Nvim_buf_attach(sock, bufnum)
-		ret1 := Decode_Nvim_Stream(sock, MES_ANY)
-		ret2 := Decode_Nvim_Stream(sock, MES_ANY)
+		api.Nvim_buf_attach(sock, bufnum)
+		ret1 := api.Decode_Nvim_Stream(sock, api.MES_ANY)
+		ret2 := api.Decode_Nvim_Stream(sock, api.MES_ANY)
 		var event *mpack.Object
 
-		if ret1.Index(0).Expect(mpack.T_NUM).(int64) == MES_NOTIFICATION {
+		if ret1.Index(0).Expect(mpack.T_NUM).(int64) == api.MES_NOTIFICATION {
 			event = ret1
-		} else if ret2.Index(0).Expect(mpack.T_NUM).(int64) == MES_NOTIFICATION {
+		} else if ret2.Index(0).Expect(mpack.T_NUM).(int64) == api.MES_NOTIFICATION {
 			event = ret2
 		} else {
 			panic("Didn't recieve an update from neovim...")
@@ -168,21 +178,21 @@ func main_loop(bufnum int) {
 	}
 
 	for {
-		event := Decode_Nvim_Stream(sock, MES_NOTIFICATION)
-		event.Print(Logfiles["main"])
+		event := api.Decode_Nvim_Stream(sock, api.MES_NOTIFICATION)
+		event.Print(util.Logfiles["main"])
 		handle_nvim_event(event)
 	}
 }
 
 //========================================================================================
 
-func pkg(varname string) string {
+func pkg(varname string) []byte {
 	// This little monument to laziness should pretty much always get inlined.
-	return "tag_highlight#" + varname
+	return []byte("tag_highlight#" + varname)
 }
 
 func create_socket() int {
-	name := Nvim_call_function(1, "serverstart", mpack.E_STRING).(string)
+	name := api.Nvim_call_function(1, []byte("serverstart"), mpack.E_STRING).(string)
 
 	var addr syscall.SockaddrUnix
 	addr.Name = name
@@ -199,26 +209,26 @@ func create_socket() int {
 }
 
 func get_compression_type(fd int) uint16 {
-	// tmp := Nvim_get_var(0, pkg("compression_type"), mpack.E_STRING).(string)
+	tmp := api.Nvim_get_var(0, pkg("compression_type"), mpack.E_STRING).(string)
 	var ret uint16 = archive.COMP_NONE
 
-	// switch tmp {
-	// case "gzip":
-	//         ret = archive.COMP_GZIP
-	// case "lzma":
-	//         ret = archive.COMP_LZMA
-	// case "none":
-	//         ret = archive.COMP_NONE
-	// default:
-	//         echo("Warning: unrecognized compression type \"%s\", defaulting to no compression.", tmp)
-	// }
-	// echo("Compression type is '%s' -> %d", tmp, ret)
+	switch tmp {
+	case "gzip":
+		ret = archive.COMP_GZIP
+	case "lzma":
+		ret = archive.COMP_LZMA
+	case "none":
+		ret = archive.COMP_NONE
+	default:
+		api.Echo("Warning: unrecognized compression type \"%s\", defaulting to no compression.", tmp)
+	}
+	api.Echo("Compression type is '%s' -> %d", tmp, ret)
 
 	return ret
 }
 
 func (bdata *Bufdata) get_initial_lines() {
-	list := Nvim_buf_get_lines(0, int(bdata.Num), 0, (-1))
+	list := api.Nvim_buf_get_lines(0, int(bdata.Num), 0, (-1))
 	if bdata.Lines.Qty == 1 {
 		bdata.Lines.Delete_Node(bdata.Lines.Head)
 	}
@@ -226,15 +236,7 @@ func (bdata *Bufdata) get_initial_lines() {
 	bdata.Initialized = true
 }
 
-func tst() {
-	calls := new(atomic_list)
-	calls.nvim_command("echom 'Hello, moron!'")
-	calls.nvim_command("echom 'Goodbye, moron!'")
-
-	Nvim_call_atomic(0, calls)
-}
-
-func tdiff(tv1, tv2 *time.Time) float64 {
-	return ((float64(tv2.Nanosecond()-tv1.Nanosecond()) / float64(1000000000.0)) +
-		(float64(tv2.Second() - tv1.Second())))
+func testroutine(i int) int {
+	util.Fsleep(float64(1))
+	return i * i
 }

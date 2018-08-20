@@ -1,25 +1,30 @@
 package archive
 
 import (
+	"bytes"
 	"compress/gzip"
+	"fmt"
 	"github.com/ulikunitz/xz"
-	"log"
 	"os"
-	"strings"
+	"tag_highlight/api"
+	"tag_highlight/util"
 )
 
 //========================================================================================
 
-func WriteFile(filename string, data []string, com_type int) bool {
+func WriteFile(filename string, data [][]byte, com_type int) bool {
 	if data == nil {
 		return false
 	}
 	var status bool
-	joined := strings.Join(data, "\n")
+	timer := util.NewTimer()
+	joined := bytes.Join(data, []byte("\n"))
+
+	// api.Echo("Writing file '%s'", filename)
 
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
 	if err != nil {
-		log.Fatalf("os.Create error '%s'\n", err)
+		panic(fmt.Sprintf("os.Create error '%s'\n", err))
 	}
 	defer file.Close()
 
@@ -33,65 +38,63 @@ func WriteFile(filename string, data []string, com_type int) bool {
 	case COMP_LZMA:
 		status = write_lzma(file, joined)
 	default:
-		log.Fatalf("Illegal value %d passed to WriteFile.\n", com_type)
+		panic(fmt.Sprintf("Illegal value %d passed to WriteFile.\n", com_type))
 	}
 
+	timer.EchoReport("writing file")
 	return status
 }
 
 //========================================================================================
 
-func write_plain(file *os.File, data string) bool {
-	if data == "" {
+func write_plain(file *os.File, data []byte) bool {
+	if data == nil {
 		return false
 	}
-	n, err := file.WriteString(data)
+	n, err := file.Write(data)
 
 	if n != len(data) && err != nil {
-		log.Printf("Warning: write error.\n")
+		api.Echo("Warning: write error.\n")
 		return false
 	}
 
 	return true
 }
 
-func write_gzip(file *os.File, data string) bool {
-	var byte_data = []byte(data)
-
+func write_gzip(file *os.File, data []byte) bool {
 	writer := gzip.NewWriter(file)
-	n, err := writer.Write(byte_data)
+	n, err := writer.Write(data)
 
-	if n != len(byte_data) || err != nil {
-		log.Printf("Warning: gzip write error.\n")
+	if n != len(data) || err != nil {
+		api.Echo("Warning: gzip write error.\n")
 		return false
 	}
 
 	return true
 }
 
-func write_bzip2(file *os.File, data string) bool {
+func write_bzip2(file *os.File, data []byte) bool {
 	panic("Not implemented")
 }
 
-func write_lzma(file *os.File, data string) bool {
-	if data == "" {
+func write_lzma(file *os.File, data []byte) bool {
+	if data == nil {
 		return false
 	}
 	var (
-		writer    *xz.Writer
-		err       error
-		n         int
-		byte_data = []byte(data)
+		writer *xz.Writer
+		err    error
+		n      int
 	)
 
 	if writer, err = xz.NewWriter(file); err != nil {
-		log.Fatalf("Compression error %s", err)
+		panic(fmt.Sprintf("Compression error %s", err))
 	}
 	defer writer.Close()
 
-	n, err = writer.Write(byte_data)
-	if n != len(byte_data) || err != nil {
-		log.Printf("Warning: lzma write error.\n")
+	n, err = writer.Write(data)
+	if n != len(data) || err != nil {
+		api.Echo("Warning: lzma write error.\n")
 		return false
 	}
 

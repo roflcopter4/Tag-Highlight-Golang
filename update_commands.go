@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
+	"tag_highlight/api"
 	"tag_highlight/mpack"
-	"tag_highlight/neotags"
+	"tag_highlight/scan"
+	"tag_highlight/util"
 )
 
 var (
@@ -17,14 +21,15 @@ var (
 func (bdata *Bufdata) Update_Highlight() {
 	update_mutex.Lock()
 	defer update_mutex.Unlock()
-	echo("Updating highlight commands for bufnum %d", bdata.Num)
+	api.Echo("Updating highlight commands for bufnum %d", bdata.Num)
+	timer := util.NewTimer()
 
 	if !bdata.Ft.Restore_Cmds_Init {
-		tmp := Nvim_get_var(0, "tag_highlight#restored_groups", mpack.E_MAP_STR_STRLIST).(map[string][]string)
+		tmp := api.Nvim_get_var(0, []byte("tag_highlight#restored_groups"), mpack.E_MAP_STR_BYTELIST).(map[string][][]byte)
 		restored_groups := tmp[bdata.Ft.Vim_Name]
 		if restored_groups != nil {
 			bdata.Ft.Restore_Cmds = get_restore_cmds(restored_groups)
-			// echo("%s", bdata.Ft.Restore_Cmds)
+			// api.Echo("%s", bdata.Ft.Restore_Cmds)
 		}
 		bdata.Ft.Restore_Cmds_Init = true
 	}
@@ -34,105 +39,96 @@ func (bdata *Bufdata) Update_Highlight() {
 		return
 	}
 
-	var buf string
-	for node := bdata.Lines.Head; node != nil; node = node.Next {
-		buf += node.Data.(string) + "\n"
-	}
+	scanner := bdata.Make_Scan_Struct()
+	tags := scanner.Scan(logdir)
 
-	tags := neotags.Everything(bdata.Make_Neotags_Struct(), buf, bdata.Topdir.Tags)
+	if util.Logfiles["taglst"] != nil {
+		for i, t := range tags {
+			fmt.Fprintf(util.Logfiles["taglst"], "Tag %d: %c - %s\n", i, t.Kind, t.Str)
+		}
+		util.Logfiles["taglst"].Sync()
+	}
 
 	if tags != nil {
-		echo("Found %d total tags", len(tags))
+		api.Echo("Found %d total tags", len(tags))
+		// bdata.update_commands(tags)
 		bdata.update_commands(tags)
-		Nvim_call_atomic(0, bdata.Calls)
+		api.Nvim_call_atomic(0, bdata.Calls)
 
-		if bdata.Ft.Restore_Cmds != "" {
-			Logfiles["cmds"].WriteString(bdata.Ft.Restore_Cmds)
-			Nvim_command(0, bdata.Ft.Restore_Cmds)
+		if bdata.Ft.Restore_Cmds != nil {
+			util.Logfiles["cmds"].Write(bdata.Ft.Restore_Cmds)
+			api.Nvim_command(0, bdata.Ft.Restore_Cmds)
 		}
 	}
+	timer.EchoReport("update highlight")
 
-	// max := 0
-	// for _, t := range tags {
-	//         if len(t.Str) > max {
-	//                 max = len(t.Str)
-	//         }
-	// }
-	// for _, t := range tags {
-	//         echo("Tag: %-*s Kind: %c", max+1, t.Str, t.Kind)
-	// }
-
-	Logfiles["cmds"].Sync()
+	// util.Logfiles["cmds"].Sync()
 }
 
-func (bdata *Bufdata) Make_Neotags_Struct() *neotags.Bufdata {
-	var (
-		equiv = make([][2]byte, len(bdata.Ft.Equiv))
-		i     = 0
-	)
-	for key, val := range bdata.Ft.Equiv {
-		equiv[i][0] = byte(key)
-		equiv[i][1] = byte(val)
-		i++
-	}
-
-	return &neotags.Bufdata{
-		Equiv:        equiv,
+func (bdata *Bufdata) Make_Scan_Struct() *scan.Bufdata {
+	return &scan.Bufdata{
+		Vimbuf:       bdata.Lines,
+		RawTags:      bdata.Topdir.Tags,
 		Ignored_Tags: bdata.Ft.Ignored_Tags,
-		Filename:     bdata.Filename,
+		Equiv:        bdata.Ft.Equiv,
 		Order:        bdata.Ft.Order,
-		Ctags_Name:   bdata.Ft.Ctags_Name,
+		Filename:     []byte(bdata.Filename),
+		Lang:         []byte(strings.ToLower(bdata.Ft.Ctags_Name)),
 		Id:           int(bdata.Ft.Id),
+		Is_C:         bdata.Topdir.Is_C,
 	}
 }
 
 //========================================================================================
 
-func get_restore_cmds(restored_groups []string) string {
-	allcmds := make([]string, 0, len(restored_groups))
+func get_restore_cmds(restored_groups [][]byte) []byte {
+	allcmds := make([][]byte, 0, len(restored_groups))
 
 	for _, group := range restored_groups {
-		cmd := "syntax list " + group
-		output := Nvim_command_output(0, cmd, mpack.E_STRING)
+		cmd := make([]byte, 0, 128)
+		append_all(&cmd, []byte("syntax list "), group)
+
+		output := api.Nvim_command_output(0, cmd, mpack.E_BYTES)
 
 		if output == nil {
 			continue
 		}
-		str := output.(string)
-		// echo("\nlen: %d, STRING: '%s'", len(str), str)
+		str := output.([]byte)
+		// api.Echo("\nlen: %d, STRING: '%s'", len(str), str)
 
-		i := strings.Index(str, "xxx")
+		i := bytes.Index(str, []byte("xxx"))
 		if i == (-1) {
 			continue
 		}
 		i += 4
-		// echo("i: %d, STRING: '%s'", i, str[i:])
+		// api.Echo("i: %d, STRING: '%s'", i, str[i:])
 
-		cmd = "syntax clear " + group + " | "
-		toks := []string{}
+		cmd = make([]byte, 0, 128)
+		cmd = append(cmd, fmt.Sprintf("syntax clear %s | ", group)...)
+		toks := [][]byte{{}}
 
-		if str[i:i+7] != "match /" && str[i:i+5] != "start" {
+		if !bytes.Equal(str[i:i+7], []byte("match /")) && !bytes.Equal(str[i:i+5], []byte("start")) {
 			// i += 7
-			cmd += "syntax keyword " + group + " "
+			append_all(&cmd, []byte("syntax keyword "), group, []byte(" "))
 
-			// echo("i: %d, STRING: '%s'", i, str[i:])
-			n := strings.IndexByte(str[i:], '\n')
+			// api.Echo("i: %d, STRING: '%s'", i, str[i:])
+			n := bytes.IndexByte(str[i:], '\n')
 
-			for ; n != (-1); n = strings.IndexByte(str[i:], '\n') {
+			for ; n != (-1); n = bytes.IndexByte(str[i:], '\n') {
 				n += i
 				if n >= len(str) {
 					panic("AAA")
 				}
-				// echo("i: %d, STRING: '%s'", i, str[i:])
-				// echo("n: %d, FOUND:  '%s'", n, str[n:])
+				// api.Echo("i: %d, STRING: '%s'", i, str[i:])
+				// api.Echo("n: %d, FOUND:  '%s'", n, str[n:])
 				toks = append(toks, str[i:n])
 
 				for str[n] == ' ' || str[n] == '\t' || str[n] == '\n' || str[n] == '\r' {
 					n++
 				}
 				i = n
-				if str[n:n+9] == "links to " {
-					n = strings.IndexByte(str[i:], '\n')
+				if bytes.Equal(str[n:n+9], []byte("links to ")) {
+					n = bytes.IndexByte(str[i:], '\n')
 					if n != (-1) && (n >= len(str) || len(str[n:]) == 0) {
 						break
 					}
@@ -140,45 +136,52 @@ func get_restore_cmds(restored_groups []string) string {
 			}
 
 			i += 9
-			toks = unique_str(toks)
-			for _, cur := range toks {
-				cmd += cur + " "
+			// toks = util.Unique_Str(toks)
+			sort.Slice(toks, func(i, x int) bool { return bytes.Compare(toks[i], toks[x]) >= 0 })
+
+			cmd = append(cmd, append(toks[0], ' ')...)
+
+			for x := 1; x < len(toks); x++ {
+				if !bytes.Equal(toks[x], toks[x-1]) {
+					cmd = append(cmd, append(toks[x], ' ')...)
+				}
 			}
 
 			link_name := str[i:]
-			assert(i > 0, "No link name")
-			cmd += fmt.Sprintf("| hi! link %s %s", group, link_name)
+			util.Assert(i > 0, "No link name")
+			cmd = append(cmd, fmt.Sprintf("| hi! link %s %s", group, link_name)...)
 
 			allcmds = append(allcmds, cmd)
 		}
 	}
 
-	return strings.Join(allcmds, " | ")
+	return bytes.Join(allcmds, []byte(" | "))
 }
 
 //========================================================================================
 
 type cmd_info struct {
-	group  string
-	prefix string
-	suffix string
+	group  []byte
+	prefix []byte
+	suffix []byte
 	kind   byte
 }
 
-func (bdata *Bufdata) update_commands(tags []neotags.Tag) {
+func (bdata *Bufdata) update_commands(tags []scan.Tag) {
 	ngroups := len(bdata.Ft.Order)
 	info := make([]cmd_info, ngroups)
 
 	for i := 0; i < ngroups; i++ {
 		ch := bdata.Ft.Order[i]
-		tmp := Nvim_get_var_fmt(0, mpack.E_MAP_STR_STR, "%s#%s#%c",
-			"tag_highlight", bdata.Ft.Vim_Name, ch).(map[string]string)
+		tmp := api.Nvim_get_var_fmt(0, mpack.E_MAP_STR_BYTES, "%s#%s#%c",
+			"tag_highlight", bdata.Ft.Vim_Name, ch).(map[string][]byte)
 
 		info[i] = cmd_info{tmp["group"], tmp["prefix"], tmp["suffix"], ch}
 	}
 
-	bdata.Calls = new(atomic_list)
-	bdata.Calls.nvim_command("ownsyntax")
+	// bdata.Calls = new(api.Atomic_list)
+	bdata.Calls = &api.Atomic_list{Calls: make([]api.Atomic_call, 0, 2048)}
+	bdata.Calls.Nvim_command([]byte("ownsyntax"))
 
 	for i := 0; i < ngroups; i++ {
 		var ctr int
@@ -190,46 +193,48 @@ func (bdata *Bufdata) update_commands(tags []neotags.Tag) {
 
 		if ctr != len(tags) {
 			cmd := handle_kind(ctr, bdata.Ft, &info[i], tags)
-			Logfiles["cmds"].WriteString(cmd + "\n")
-			bdata.Calls.nvim_command(cmd)
+			// util.Logfiles["cmds"].WriteString(cmd + "\n")
+			bdata.Calls.Nvim_command(cmd)
 		}
 	}
 
-	Logfiles["cmds"].Write([]byte("\n\n\n\n"))
+	util.Logfiles["cmds"].Write([]byte("\n\n\n\n"))
 }
 
-func handle_kind(i int, ft *Ftdata, info *cmd_info, tags []neotags.Tag) string {
-	group_id := fmt.Sprintf("_tag_highlight_%s_%c_%s", ft.Vim_Name, info.kind, info.group)
-	cmd := fmt.Sprintf("silent! syntax clear %s | ", group_id)
+func handle_kind(i int, ft *Ftdata, info *cmd_info, tags []scan.Tag) []byte {
+	group_id := []byte(fmt.Sprintf("_tag_highlight_%s_%c_%s", ft.Vim_Name, info.kind, info.group))
+	cmd := []byte(fmt.Sprintf("silent! syntax clear %s | ", group_id))
 
-	if info.prefix != "" || info.suffix != "" {
-		prefix := "\\C\\<"
-		suffix := "\\>"
+	if info.prefix != nil || info.suffix != nil {
+		prefix := []byte("\\C\\<")
+		suffix := []byte("\\>")
 
-		if info.prefix != "" {
+		if info.prefix != nil {
 			prefix = info.prefix
 		}
-		if info.suffix != "" {
+		if info.suffix != nil {
 			suffix = info.suffix
 		}
 
-		cmd += fmt.Sprintf("syntax match %s /%s\\%%(%s", group_id, prefix, tags[i].Str)
+		cmd = append(cmd, fmt.Sprintf("syntax match %s /%s\\%%(%s", group_id, prefix, tags[i].Str)...)
 		i++
 
 		for ; i < len(tags) && tags[i].Kind == info.kind; i++ {
-			cmd += "\\|" + tags[i].Str
+			cmd = append(cmd, []byte("\\|")...)
+			cmd = append(cmd, tags[i].Str...)
 		}
 
-		cmd += fmt.Sprintf("\\)%s/ display | hi def link %s %s", suffix, group_id, info.group)
+		cmd = append(cmd, fmt.Sprintf("\\)%s/ display | hi def link %s %s", suffix, group_id, info.group)...)
 	} else {
-		cmd += fmt.Sprintf(" syntax keyword %s %s ", group_id, tags[i].Str)
+		cmd = append(cmd, fmt.Sprintf(" syntax keyword %s %s ", group_id, tags[i].Str)...)
 		i++
 
 		for ; i < len(tags) && tags[i].Kind == info.kind; i++ {
-			cmd += tags[i].Str + " "
+			cmd = append(cmd, tags[i].Str...)
+			cmd = append(cmd, ' ')
 		}
 
-		cmd += fmt.Sprintf("display | hi def link %s %s", group_id, info.group)
+		cmd = append(cmd, fmt.Sprintf("display | hi def link %s %s", group_id, info.group)...)
 	}
 
 	return cmd
@@ -237,23 +242,17 @@ func handle_kind(i int, ft *Ftdata, info *cmd_info, tags []neotags.Tag) string {
 
 //========================================================================================
 
-func (list *atomic_list) nvim_command(cmd string) {
-	call := atomic_call{}
-	call.args = make([]interface{}, 2)
-	call.args[0] = "nvim_command"
-	call.args[1] = cmd
-	call.fmt = "s[s]"
-
-	list.calls = append(list.calls, call)
+func (bdata *Bufdata) update_from_cache() {
+	api.Echo("Updating from cache")
+	api.Nvim_call_atomic(0, bdata.Calls)
+	if bdata.Ft.Restore_Cmds != nil {
+		api.Nvim_command(0, bdata.Ft.Restore_Cmds)
+		// api.Echo("%s", bdata.Ft.Restore_Cmds)
+	}
 }
 
-//========================================================================================
-
-func (bdata *Bufdata) update_from_cache() {
-	echo("Updating from cache")
-	Nvim_call_atomic(0, bdata.Calls)
-	if bdata.Ft.Restore_Cmds != "" {
-		Nvim_command(0, bdata.Ft.Restore_Cmds)
-		// echo("%s", bdata.Ft.Restore_Cmds)
+func append_all(to *[]byte, a ...interface{}) {
+	for _, src := range a {
+		*to = append(*to, src.([]byte)...)
 	}
 }
